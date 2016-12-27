@@ -92,7 +92,7 @@ void write_uint64(unsigned char **dest, uint64_t value) {
 
     *(uint32_t*)*dest = htonl(value >> 32);
 	*dest += 4;
-	*(uint32_t*)dest = htonl(value & 0xffffffff);
+	*(uint32_t*)*dest = htonl(value & 0xffffffff);
 	*dest += 4;
 }
 
