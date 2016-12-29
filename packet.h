@@ -22,7 +22,8 @@ typedef enum data_type {
 	CONNECT_DATA = 0,
 	CONTENT_DATA = 1,
 	ROUTE_LIST_DATA = 2,
-	STATUS_DATA = 3
+	STATUS_DATA = 3,
+	DATA_TYPE_COUNT = 4
 } data_type;
 
 typedef enum status_type {
@@ -76,6 +77,13 @@ typedef struct route_info {
 } route_info;
 
 
+typedef struct return_route_info {
+	uint32_t id;
+	uint64_t dest_node_id;
+	const unsigned char *data;
+} return_route_info;
+
+
 typedef struct header_info {
 	int is_incoming;
 	uint64_t dest_node_id;	/* iff 0, dest_client_id is populated */
@@ -96,6 +104,33 @@ typedef struct ack_info {
 } ack_info;
 
 
+typedef struct packet_info {
+	unsigned char exit_client_id[CLIENT_ID_SIZE];
+	uint16_t connection_id;
+	uint64_t sequence_id;
+	uint16_t ack_count;
+	ack_info *acks;
+	data_info data;
+} packet_info;
+
+
+typedef struct route_list_info {
+	uint32_t total_count;
+	uint64_t start_sequence_id;
+	unsigned char count;
+	route_info routes[ROUTES_PER_PACKET];
+} route_list_info;
+
+
+typedef struct return_route_list_info {
+	uint32_t total_count;
+	uint64_t start_sequence_id;
+	unsigned char count;
+	return_route_info routes[ROUTES_PER_PACKET];
+} return_route_list_info;
+	
+
+
 /* internal helpers */
 int in_array(const size_t *array, size_t value, size_t array_len);
 void write_data_section(unsigned char *packet, const unsigned char *end_ptr, uint16_t connection_id, uint64_t sequence_id, const ack_info *acks, uint16_t ack_count, const data_info *data);
@@ -104,10 +139,10 @@ void write_data_section(unsigned char *packet, const unsigned char *end_ptr, uin
 int create_outgoing_packet(unsigned char *packet, const client_connection_info *connection, const route_info *route, const ack_info *acks, uint16_t ack_count, const data_info *data);
 
 /* data->content must point to a valid buffer to fill */
-int create_route_list_data(data_info *data, uint32_t total_route_count, uint64_t start_sequence_id, const unsigned char *entry_client_id, const route_info *routes, unsigned char route_count);
+int create_route_list_data(data_info *data, const route_list_info *route_list, const unsigned char *entry_client_id);
 
 /* acks + data must be <= INCOMING_DATA_MAX */
-int create_incoming_packet(unsigned char *packet, uint64_t *dest_node_id, const exit_node_connection_info *connection, const unsigned char *route, const ack_info *acks, uint16_t ack_count, const data_info *data);
+int create_incoming_packet(unsigned char *packet, const exit_node_connection_info *connection, const return_route_info *route, const ack_info *acks, uint16_t ack_count, const data_info *data);
 
 /* the output_layer is prefixed with the dest_node_id (may be 0), so add
    8 to the pointer to get the actual layer content */
@@ -115,6 +150,15 @@ int process_layer(header_info *header, unsigned char *output_layer, const unsign
 
 /* symmetric_keys are in order of decryption: entry to exit */
 int decrypt_incoming_packet(unsigned char *packet, const unsigned char *symmetric_keys);
+
+/* packet will contain a pointer into decrypted_packet for packet->data.content.
+   decrypted_packet will not be modified; it is non-const because packet->data.content is non-const.
+   packet->acks will point to allocated memory that needs to be freed with free_packet */
+int read_packet(packet_info *packet, unsigned char *decrypted_packet, int is_incoming);
+int free_packet(packet_info *packet);
+
+/* route_list will contain pointers into data->content */
+int read_route_list_data(return_route_list_info *route_list, const data_info *data);
 
 int generate_route(route_info *route, uint32_t route_id, const client_connection_info *connection, const node_info *available_nodes, size_t node_count, int is_incoming); 
 int encrypt_route(unsigned char *encrypted_route, const route_info *route, const unsigned char *entry_client_id);

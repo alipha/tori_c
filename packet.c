@@ -148,19 +148,22 @@ int create_outgoing_packet(unsigned char *packet, const client_connection_info *
 }
 
 
-int create_route_list_data(data_info *data, uint32_t total_route_count, uint64_t start_sequence_id, const unsigned char *entry_client_id, const route_info *routes, unsigned char route_count) {
+int create_route_list_data(data_info *data, const route_list_info *route_list, const unsigned char *entry_client_id) {
 	assert(data);
 	assert(data->content);
+	assert(route_list);
+	assert(route_list->routes);
 	assert(entry_client_id);
-	assert(routes);
-	assert(sizeof total_route_count == sizeof(uint32_t));
-	assert(sizeof start_sequence_id == sizeof(uint64_t));
-	assert(sizeof route_count == 1);
+	assert(sizeof route_list->total_count == sizeof(uint32_t));
+	assert(sizeof route_list->start_sequence_id == sizeof(uint64_t));
+	assert(sizeof route_list->count == 1);
 
 	unsigned char *p = data->content;
+	unsigned char route_count = route_list->count;
+	const route_info *routes = route_list->routes;
 
-	write_uint32(&p, total_route_count);
-	write_uint64(&p, start_sequence_id);
+	write_uint32(&p, route_list->total_count);
+	write_uint64(&p, route_list->start_sequence_id);
 	write_byte(&p, route_count);
 
 	for(size_t i = 0; i < route_count; i++) {
@@ -175,22 +178,18 @@ int create_route_list_data(data_info *data, uint32_t total_route_count, uint64_t
 }
 
 
-int create_incoming_packet(unsigned char *packet, uint64_t *dest_node_id, const exit_node_connection_info *connection, const unsigned char *route, const ack_info *acks, uint16_t ack_count, const data_info *data) {
+int create_incoming_packet(unsigned char *packet, const exit_node_connection_info *connection, const return_route_info *route, const ack_info *acks, uint16_t ack_count, const data_info *data) {
 	assert(packet);
-	assert(dest_node_id);
 	assert(connection);
 	assert(route);
+	assert(route->data);
 	assert(acks || ack_count == 0);
 	assert(data);
-	assert(sizeof *dest_node_id == sizeof(uint64_t));
 
 	unsigned char *encrypted_start;
 	unsigned char *end_ptr = packet + PACKET_SIZE - crypto_secretbox_MACBYTES;
 
-	route += sizeof(uint32_t);	/* skip past route_id */
-	*dest_node_id = read_uint64(&route);
-
-	write_binary(&packet, route, INCOMING_ROUTE_LEN);
+	write_binary(&packet, route->data, INCOMING_ROUTE_LEN);
 
 	encrypted_start = packet;
 
@@ -326,6 +325,132 @@ int decrypt_incoming_packet(unsigned char *packet, const unsigned char *symmetri
 	if(crypto_secretbox_easy(packet, packet, end_ptr - packet, data_nonce, symmetric_keys))
 		return 3;
 
+	return 0;
+}
+
+
+int read_packet(packet_info *packet, unsigned char *decrypted_packet, int is_incoming) {
+	assert(packet);
+	assert(decrypted_packet);
+	assert(sizeof packet->connection_id == sizeof(uint16_t));
+	assert(sizeof packet->sequence_id == sizeof(uint64_t));
+	assert(sizeof packet->ack_count == sizeof(uint16_t));
+	assert(sizeof packet->acks[0].low_sequence_id == sizeof(uint64_t));
+	assert(sizeof packet->acks[0].high_sequence_id == sizeof(uint64_t));
+	assert(sizeof packet->data.length == sizeof(uint16_t));
+
+	int error = 0;
+	const unsigned char *p = decrypted_packet;
+	uint16_t ack_count;
+	ack_info *acks;
+	uint16_t ack_len;
+	uint16_t data_len;
+
+	packet->acks = 0;
+	packet->data.content = 0;
+
+
+	if(is_incoming) {
+#ifndef DEBUG
+		p += PACKET_ID_SIZE;
+#else
+		unsigned char id[PACKET_ID_SIZE];
+		read_binary(id, &p, sizeof id);
+
+		for(size_t id_index = 0; id_index < sizeof id; id_index++)
+			assert(id[id_index] == 0);
+
+		memset(packet->exit_client_id, 0, sizeof packet->exit_client_id);
+		packet->connection_id = 0;
+#endif
+	} else {
+		read_binary(packet->exit_client_id, &p, sizeof packet->exit_client_id);
+		packet->connection_id = read_uint16(&p);
+	}
+
+	packet->sequence_id = read_uint64(&p);
+	ack_count = read_uint16(&p);
+	ack_len = ack_count * 2 * sizeof(uint64_t);
+
+	if(is_incoming && ack_len > INCOMING_DATA_MAX)
+		return 1;
+	else if(!is_incoming && ack_len > OUTGOING_DATA_MAX)
+		return 2;
+
+	packet->ack_count = ack_count;
+	acks = malloc(ack_count * sizeof *packet->acks);
+	packet->acks = acks;
+
+	if(!acks)
+		return 3;
+
+	for(size_t i = 0; i < ack_count; i++) {
+		acks[i].low_sequence_id = read_uint64(&p);
+		acks[i].high_sequence_id = read_uint64(&p);
+	}
+
+	packet->data.type = read_byte(&p);
+	data_len = read_uint16(&p);
+	packet->data.length = data_len;
+
+	if(packet->data.type < 0 || packet->data.type >= DATA_TYPE_COUNT)
+		error = 4;
+
+	if(is_incoming && data_len > INCOMING_DATA_MAX - ack_len)
+		error = 5;
+	else if(!is_incoming && data_len > OUTGOING_DATA_MAX - ack_len)
+		error = 6;
+
+	if(error) {
+		free_packet(packet);
+		return error;
+	}
+
+	/* get around the fact p is const */
+	packet->data.content = decrypted_packet + (p - decrypted_packet);
+	return 0;
+}
+
+
+int free_packet(packet_info *packet) {
+	assert(packet);
+
+	free(packet->acks);
+	return 0;
+}
+
+
+int read_route_list_data(return_route_list_info *route_list, const data_info *data) {
+	assert(route_list);
+	assert(data);
+	assert(data->content);
+	assert(data->length <= OUTGOING_DATA_MAX);
+
+	const unsigned char *p = data->content;
+	const unsigned char *end_ptr = p + data->length;
+	unsigned char route_count;
+	return_route_info *route;
+
+	if(data->length < 13)
+		return 1;
+
+	route_list->total_count = read_uint32(&p);
+	route_list->start_sequence_id = read_uint64(&p);
+	route_count = read_byte(&p);
+	route_list->count = route_count;
+
+	if(route_count * ROUTE_SIZE != end_ptr - p)
+		return 2;
+
+	for(size_t i = 0; i < route_count; i++) {
+		route = &route_list->routes[i];
+		route->id = read_uint32(&p);
+		route->dest_node_id = read_uint64(&p);
+		route->data = p;
+		p += INCOMING_ROUTE_LEN;
+	}
+
+	assert(p == end_ptr);
 	return 0;
 }
 

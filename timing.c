@@ -12,7 +12,7 @@
 //#define TESTING 1
 
 #ifndef TESTING
-#define PACKET_COUNT 10000
+#define PACKET_COUNT 1000
 #else
 #define PACKET_COUNT 1
 #endif
