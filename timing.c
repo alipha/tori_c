@@ -25,7 +25,7 @@ typedef unsigned char packet_bytes[DEST_ID_SIZE + PACKET_SIZE];
 node_info available_nodes[AVAILABLE_NODES] = {0};
 unsigned char node_private_keys[AVAILABLE_NODES][crypto_box_SECRETKEYBYTES] = {0};
 
-route_info *return_routes = 0;
+route_list_info *return_route_lists = 0;
 
 packet_bytes *packets = 0;
 packet_bytes *output_packets = 0;
@@ -60,8 +60,6 @@ void verify_incoming_packets(void);
 int main(void) {
 	assert(sizeof node_private_keys[0] == crypto_box_SECRETKEYBYTES);
 	assert(sizeof *packets == DEST_ID_SIZE + PACKET_SIZE);
-
-	assert(0);
 
 	clock_t start;
 	clock_t stop;
@@ -127,12 +125,12 @@ void print_hex(const unsigned char *buffer, size_t len) {
 	}
 }
 
-void print_route(const route_info *routes, const char *name, uint32_t route_id) {
+void print_route(const route_info *route, const char *name, uint32_t route_id) {
 	printf("%s[%d] = {\n", name, route_id);
-	printf("\tid = %u,\n", routes[route_id].id);
+	printf("\tid = %u,\n", route->id);
 
 	for(size_t n = 0; n < ROUTE_NODES_MAX; n++) {
-		const route_node_info *node = &routes[route_id].nodes[n];
+		const route_node_info *node = &route->nodes[n];
 
 		printf("\tnodes[%lu] = {\n", n);
 		printf("\t\tepk = "); print_hex(node->ephemeral_public_key, sizeof node->ephemeral_public_key); puts("... ,");
@@ -159,13 +157,13 @@ void allocate(void) {
 	
 
 #ifndef TESTING
-	return_routes = malloc(PACKET_COUNT * ROUTES_PER_PACKET * sizeof *return_routes);
+	return_route_lists = malloc(PACKET_COUNT * sizeof *return_route_lists);
 #else
-	return_routes = calloc((PACKET_COUNT + 2) * ROUTES_PER_PACKET, sizeof *return_routes);
+	return_route_lists = calloc(PACKET_COUNT + 2, sizeof *return_route_lists);
 #endif
 
-	if(!return_routes) {
-		puts("Error malloc return_routes");
+	if(!return_route_lists) {
+		puts("Error malloc return_route_lists");
 		exit(7);
 	}
 
@@ -175,7 +173,7 @@ void allocate(void) {
 #else
 	data.content = content + 1000;
 	packets++;
-	return_routes++;
+	return_route_lists++;
 #endif
 	
 	output_packets = packets + PACKET_COUNT;
@@ -229,11 +227,15 @@ void create_outgoing_packets(void) {
 #endif
 
 	for(size_t i = 0; i < PACKET_COUNT; i++) {
-		connection.next_sequence_id = i;
 		assert(route_id == i * ROUTES_PER_PACKET);
 
+		connection.next_sequence_id = i;
+		return_route_lists[i].total_count = PACKET_COUNT * ROUTES_PER_PACKET;
+		return_route_lists[i].start_sequence_id = 0;
+		return_route_lists[i].count = ROUTES_PER_PACKET;
+
 		for(size_t r = 0; r < ROUTES_PER_PACKET; r++) {
-			if((error = generate_route(&return_routes[route_id], route_id, &connection, available_nodes, AVAILABLE_NODES, 1))) {
+			if((error = generate_route(&return_route_lists[i].routes[r], route_id, &connection, available_nodes, AVAILABLE_NODES, 1))) {
 				printf("Error generate incoming route: %d\n", error);
 				exit(3);
 			}
@@ -241,16 +243,17 @@ void create_outgoing_packets(void) {
 
 #ifdef TESTING
 			if(i == 0 && r == 0)
-				assert(is_blank((unsigned char*)&return_routes[-1], sizeof *return_routes));
+				assert(is_blank((unsigned char*)&return_route_lists[-1], sizeof *return_route_lists));
 			
-			assert(is_blank((unsigned char*)&return_routes[route_id], sizeof *return_routes));
+			if(r < ROUTES_PER_PACKET - 1)
+				assert(is_blank((unsigned char*)&return_route_lists[i].routes[r + 1], sizeof return_route_lists[i].routes[r + 1]));
 	
 			if(r == 0 || r == 1)
-				print_route(return_routes, "return_routes", route_id - 1);
+				print_route(&return_route_lists[i].routes[r], "return_routes", route_id - 1);
 #endif
 		}
 
-		if((error = create_route_list_data(&data, PACKET_COUNT * ROUTES_PER_PACKET, 0, client_id, &return_routes[i * ROUTES_PER_PACKET], ROUTES_PER_PACKET))) {
+		if((error = create_route_list_data(&data, &return_route_lists[i], client_id))) {
 			printf("Error create_route_list_data: %d\n", error);
 			exit(4);
 		}
@@ -328,7 +331,68 @@ void process_packets(void) {
 
 
 void verify_outgoing_packets(void) {
+	int error = 0;
+	packet_info packet;
+	return_route_list_info route_list;
+
 	for(size_t i = 0; i < PACKET_COUNT; i++) {
+		if((error = read_packet(&packet, packets[i] + DEST_ID_SIZE, 0))) {
+			printf("read_packet failed: %d\n", error);
+			exit(9);
+		}
+
+		if(memcmp(packet.exit_client_id, client_id, sizeof client_id) != 0) {
+			printf("Bad client_id\n");
+			exit(10);
+		}
+
+		if(packet.connection_id != 5) {
+			printf("Bad connection_id. Expected 5. Actual: %d\n", packet.connection_id); 
+			exit(11);
+		}
+
+		if(packet.sequence_id != i) {
+			printf("Bad sequence_id. Expected %d. Actual: %d\n", i, packet.sequence_id);
+			exit(12);
+		}
+
+		if(packet.ack_count != 0) {
+			printf("Bad ack_count. Expected 0. Actual: %d\n", packet.ack_count);
+			exit(13);
+		}
+
+		if(packet.data.type != ROUTE_LIST_DATA) {
+			printf("Bad data.type. Expected %d. Actual: %d\n", (int)ROUTE_LIST_DATA, packet.data.type);
+			exit(14);
+		}
+
+
+
+		if((error = read_route_list_data(&route_list, packet.data.content))) {
+			printf("read_route_list_data failed: %d]n", error);
+			exit(15);
+		}
+
+		if(route_list.total_count != PACKET_COUNT * ROUTES_PER_PACKET) {
+			printf("Bad total_count. Expected %d. Actual: %d\n", PACKET_COUNT * ROUTES_PER_PACKET, route_list.total_count);
+			exit(16);
+		}
+
+		if(route_list.start_sequence_id != 0) {
+			printf("Bad start_sequence_id. Expected 0. Actual: %d\n", route_list.start_sequence_id);
+			exit(17);
+		}
+
+		if(route_list.count != ROUTES_PER_PACKET) {
+			printf("Bad route_list.count. Expected %d. Actual: %d\n", ROUTES_PER_PACKET, route_list.count);
+			exit(18);
+		}
+
+		for(size_t r = 0; r < route_list.count; r++) {
+
+		}
+
+		free_packet(&packet);
 	}
 }
 
