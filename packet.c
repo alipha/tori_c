@@ -24,7 +24,7 @@
 #endif
 
 
-
+/*
 #include <stdio.h>
 static void print_hex(const unsigned char *buffer, size_t len) {
     const char *digits = "0123456789abcdef";
@@ -34,7 +34,7 @@ static void print_hex(const unsigned char *buffer, size_t len) {
         putchar(digits[buffer[i] & 15]);
     }
 }
-
+*/
 
 
 static unsigned char data_nonce[crypto_stream_NONCEBYTES] = {0};
@@ -186,18 +186,21 @@ int create_incoming_packet(unsigned char *packet, const exit_node_connection_inf
 	assert(acks || ack_count == 0);
 	assert(data);
 
+	unsigned char inner_nonce[crypto_secretbox_NONCEBYTES] = {0};
+	unsigned char *pn = inner_nonce;
 	unsigned char *encrypted_start;
 	unsigned char *end_ptr = packet + PACKET_SIZE - crypto_secretbox_MACBYTES;
 
+	write_uint64(&pn, connection->next_packet_id);
 	write_binary(&packet, route->data, INCOMING_ROUTE_LEN);
 
 	encrypted_start = packet;
 
-	memset(packet, 0, PACKET_ID_SIZE);	/* write id */
-	packet += PACKET_ID_SIZE;
+	write_uint64(&packet, 0);
+	write_uint64(&packet, connection->next_packet_id);
 	write_data_section(packet, end_ptr, connection->connection_id, connection->next_sequence_id, acks, ack_count, data);
 
-	if(crypto_secretbox_easy(encrypted_start, encrypted_start, end_ptr - encrypted_start, data_nonce, connection->symmetric_key))
+	if(crypto_secretbox_easy(encrypted_start, encrypted_start, end_ptr - encrypted_start, inner_nonce, connection->symmetric_key))
 		return 1;
 
 	return 0;
@@ -260,7 +263,7 @@ puts("");
 			client_id_ptr = original_output_layer;
 			read_binary(header->dest_client_id, &client_id_ptr, sizeof header->dest_client_id);
 
-#if DEBUG
+#ifdef DEBUG
 			write_uint64(&output_layer, 0);	/* there's no dest_node_id */
 #else
 			output_layer += node_id_len;
@@ -286,7 +289,7 @@ puts("");
 			assert((output_layer[node_id_len + sizeof ephemeral_public_key] & ~3) == 0);
 
 		} else { /* last node in route */
-#if DEBUG
+#ifdef DEBUG
 			write_uint64(&output_layer, 0);	/* there's no dest_node_id */
 #else
 			output_layer += node_id_len;
@@ -305,26 +308,36 @@ puts("");
 }
 
 
-int decrypt_incoming_packet(unsigned char *packet, const unsigned char *symmetric_keys) {
+int decrypt_incoming_packet(unsigned char *packet, uint64_t packet_id, const route_info *route) {
 	assert(packet);
-	assert(symmetric_keys);
+	assert(route);
 
+	unsigned char inner_nonce[crypto_secretbox_NONCEBYTES] = {0};
+	unsigned char *pn = inner_nonce;
 	unsigned char *end_ptr = packet + PACKET_SIZE;
+	size_t i;
 
 	if(packet[crypto_box_PUBLICKEYBYTES] & ~3)
 		return 1;
 
+	write_uint64(&pn, packet_id);
 	packet += INCOMING_ROUTE_LEN;
 
-	for(size_t i = 0; i < ROUTE_NODES_MAX - 1; i++) {
-		if(crypto_stream_xor(packet, packet, end_ptr - packet, data_nonce, symmetric_keys))
+	assert(memcmp(packet + crypto_stream_MACBYTES, route->encrypted_packet_id) == 0);
+
+	for(i = 0; i < ROUTE_NODES_MAX - 1; i++) {
+		if(crypto_stream_xor(packet, packet, end_ptr - packet, data_nonce, route->nodes[i].symmetric_key))
 			return 2;
-		symmetric_keys += crypto_stream_KEYBYTES;
 	}
 
-	if(crypto_secretbox_easy(packet, packet, end_ptr - packet, data_nonce, symmetric_keys))
+	if(crypto_secretbox_easy(packet, packet, end_ptr - packet, inner_nonce, route->nodes[i].symmetric_key))
 		return 3;
 
+#ifdef DEBUG
+	const unsigned char *p = packet;
+	assert(read_uint64(&p) == 0);
+	assert(read_uint64(&p) == packet_id);
+#endif
 	return 0;
 }
 
@@ -462,9 +475,12 @@ int generate_route(route_info *route, uint32_t route_id, const client_connection
 	assert(node_count >= ROUTE_NODES_MAX);
 	assert(connection->exit_node);
 
-	size_t i = 0;
+	int i = 0;
 	size_t nodeIndexes[ROUTE_NODES_MAX] = {SIZE_MAX};
 	unsigned char ephemeral_private_key[crypto_box_SECRETKEYBYTES];
+	unsigned char mac[crypto_secretbox_MACBYTES];
+	unsigned char inner_nonce[crypto_secretbox_NONCEBYTES] = {0};
+	unsigned char *p = inner_nonce;
 	route_node_info *route_node;
 	const node_info *node;
 
@@ -484,7 +500,7 @@ int generate_route(route_info *route, uint32_t route_id, const client_connection
 		route_node = &route->nodes[i];
 
 		if(i == 0 && is_incoming) {
-#if DEBUG
+#ifdef DEBUG
 			memset(route_node->ephemeral_public_key, 0, sizeof route_node->ephemeral_public_key);
 #endif
 			memcpy(route_node->symmetric_key, connection->exit_node_symmetric_key, sizeof route_node->symmetric_key);
@@ -501,7 +517,23 @@ int generate_route(route_info *route, uint32_t route_id, const client_connection
 		route_node->node = node;		
 		i++;
 	}
-	
+
+
+	write_uint64(&p, route_id);
+
+	p = route->encrypted_packet_id;
+	write_uint64(&p, 0);
+	write_uint64(&p, route_id);
+	p = route->encrypted_packet_id;
+
+	if(crypto_secretbox_detached(p, mac, p, PACKET_ID_SIZE, inner_nonce, connection->exit_node_symmetric_key))
+		return 3;
+
+	for(i = ROUTE_NODES_MAX	- 2; i >= 0; i--) {
+		if(crypto_stream_xor(p, p, PACKET_ID_SIZE, data_nonce, route->nodes[i].symmetric_key))
+			return 4;
+	}
+
 	return 0;
 }
 

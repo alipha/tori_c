@@ -60,6 +60,7 @@ typedef struct client_connection_info {
 typedef struct exit_node_connection_info {
 	uint16_t connection_id;
 	uint64_t next_sequence_id;
+	uint64_t next_packet_id;
 	unsigned char symmetric_key[crypto_secretbox_KEYBYTES];
 } exit_node_connection_info;
 
@@ -73,6 +74,7 @@ typedef struct route_node_info {
 
 typedef struct route_info {
 	uint32_t id;
+	unsigned char encrypted_packet_id[PACKET_ID_SIZE];
 	route_node_info nodes[ROUTE_NODES_MAX];
 } route_info;
 
@@ -148,8 +150,7 @@ int create_incoming_packet(unsigned char *packet, const exit_node_connection_inf
    8 to the pointer to get the actual layer content */
 int process_layer(header_info *header, unsigned char *output_layer, const unsigned char *layer, const unsigned char *node_public_key, const unsigned char *node_private_key);
 
-/* symmetric_keys are in order of decryption: entry to exit */
-int decrypt_incoming_packet(unsigned char *packet, const unsigned char *symmetric_keys);
+int decrypt_incoming_packet(unsigned char *packet, uint64_t packet_id, const route_info *route);
 
 /* packet will contain a pointer into decrypted_packet for packet->data.content.
    decrypted_packet will not be modified; it is non-const because packet->data.content is non-const.
