@@ -523,7 +523,7 @@ void verify_incoming_packets(void) {
 	int error = 0;
 
 	for(size_t i = 0; i < PACKET_COUNT; i++) {
-		if((error = decrypt_incoming_packet(packets[i] + DEST_ID_SIZE, i, ))) {
+		if((error = decrypt_incoming_packet(packets[i] + DEST_ID_SIZE, i, &route_lists[i].routes[ROUTES_PER_PACKET - 1]))) {
 			printf("decrypt_incoming_packet failed: %d\n", error);
 			exit(25);
 		}

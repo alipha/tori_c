@@ -323,7 +323,7 @@ int decrypt_incoming_packet(unsigned char *packet, uint64_t packet_id, const rou
 	write_uint64(&pn, packet_id);
 	packet += INCOMING_ROUTE_LEN;
 
-	assert(memcmp(packet + crypto_stream_MACBYTES, route->encrypted_packet_id) == 0);
+	assert(memcmp(packet + crypto_secretbox_MACBYTES, route->encrypted_packet_id, sizeof route->encrypted_packet_id) == 0);
 
 	for(i = 0; i < ROUTE_NODES_MAX - 1; i++) {
 		if(crypto_stream_xor(packet, packet, end_ptr - packet, data_nonce, route->nodes[i].symmetric_key))

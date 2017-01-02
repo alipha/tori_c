@@ -1,6 +1,5 @@
 #include "pack.h"
 #include <string.h>
-#include <arpa/inet.h>
 #include <assert.h>
 
 
@@ -26,30 +25,24 @@ uint16_t read_uint16(const unsigned char **src) {
 	assert(src);
 	assert(*src);
 
-	uint16_t value = ntohs(*(const uint16_t*)*src);
-	*src += sizeof value;
-	return value;
+	uint16_t upper = read_byte(src) << 8;
+	return upper | read_byte(src);
 }
 
 uint32_t read_uint32(const unsigned char **src) {
 	assert(src);
 	assert(*src);
 
-	uint32_t value = ntohl(*(const uint32_t*)*src);
-	*src += sizeof value;
-	return value;
+	uint32_t upper = (uint32_t)read_uint16(src) << 16;
+	return upper | read_uint16(src);
 }
 
 uint64_t read_uint64(const unsigned char **src) {
 	assert(src);
 	assert(*src);
 
-	uint64_t upper = ntohl(*(const uint32_t*)*src);
-	*src += 4;
-	uint32_t lower = ntohl(*(const uint32_t*)*src);
-	*src += 4;
-
-	return (upper << 32) | lower;
+	uint64_t upper = (uint64_t)read_uint32(src) << 32;
+	return upper | read_uint32(src);
 }
 
 
@@ -74,26 +67,24 @@ void write_uint16(unsigned char **dest, uint16_t value) {
 	assert(dest);
 	assert(*dest);
 	
-	*(uint16_t*)*dest = htons(value);
-	*dest += sizeof value;
+	write_byte(dest, value >> 8);
+	write_byte(dest, value & 0xff);
 }
 
 void write_uint32(unsigned char **dest, uint32_t value) {
 	assert(dest);
 	assert(*dest);
 
-	*(uint32_t*)*dest = htonl(value);
-	*dest += sizeof value;
+	write_uint16(dest, value >> 16);
+	write_uint16(dest, value & 0xffff);
 }
 
 void write_uint64(unsigned char **dest, uint64_t value) {
 	assert(dest);
 	assert(*dest);
 
-    *(uint32_t*)*dest = htonl(value >> 32);
-	*dest += 4;
-	*(uint32_t*)*dest = htonl(value & 0xffffffff);
-	*dest += 4;
+	write_uint32(dest, value >> 32);
+	write_uint32(dest, value & 0xffffffff);
 }
 
 

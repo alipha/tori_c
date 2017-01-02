@@ -1,6 +1,8 @@
 #ifndef TORI_PACKET_H
 #define TORI_PACKET_H
 
+#define SODIUM_STATIC
+
 #include <stddef.h>
 #include <stdint.h>
 #include <sodium.h>
