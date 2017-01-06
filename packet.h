@@ -13,10 +13,10 @@
 #define ROUTE_NODES_MAX 3
 #define OUTGOING_HEADER_LEN 41
 #define INCOMING_ROUTE_LEN ((ROUTE_NODES_MAX - 1) * OUTGOING_HEADER_LEN + 8)
-#define ROUTE_SIZE ((ROUTE_NODES_MAX - 1) * OUTGOING_HEADER_LEN + 20)
-#define ROUTES_PER_PACKET ((OUTGOING_DATA_MAX - 13) / ROUTE_SIZE)
+#define ROUTE_SIZE ((ROUTE_NODES_MAX - 1) * OUTGOING_HEADER_LEN + 24)
+#define ROUTES_PER_PACKET (OUTGOING_DATA_MAX / ROUTE_SIZE)
 #define CLIENT_ID_SIZE 16
-#define PACKET_ID_SIZE 16
+#define ROUTE_ID_SIZE 16
 #define DEST_ID_SIZE sizeof(uint64_t)
 
 
@@ -62,7 +62,7 @@ typedef struct client_connection_info {
 typedef struct exit_node_connection_info {
 	uint16_t connection_id;
 	uint64_t next_sequence_id;
-	uint64_t next_packet_id;
+	uint64_t next_route_id;
 	unsigned char symmetric_key[crypto_secretbox_KEYBYTES];
 } exit_node_connection_info;
 
@@ -75,14 +75,14 @@ typedef struct route_node_info {
 
 
 typedef struct route_info {
-	uint32_t id;
-	unsigned char encrypted_packet_id[PACKET_ID_SIZE];
+	uint64_t id;
+	unsigned char encrypted_route_id[ROUTE_ID_SIZE];
 	route_node_info nodes[ROUTE_NODES_MAX];
 } route_info;
 
 
 typedef struct return_route_info {
-	uint32_t id;
+	uint64_t id;
 	uint64_t dest_node_id;
 	const unsigned char *data;
 } return_route_info;
@@ -119,17 +119,13 @@ typedef struct packet_info {
 
 
 typedef struct route_list_info {
-	uint32_t total_count;
-	uint64_t start_sequence_id;
-	unsigned char count;
+	size_t count;	                     /* not stored in the packet */
 	route_info routes[ROUTES_PER_PACKET];
 } route_list_info;
 
 
 typedef struct return_route_list_info {
-	uint32_t total_count;
-	uint64_t start_sequence_id;
-	unsigned char count;
+	size_t count;                        /* not stored in the packet */
 	return_route_info routes[ROUTES_PER_PACKET];
 } return_route_list_info;
 	
@@ -152,7 +148,7 @@ int create_incoming_packet(unsigned char *packet, const exit_node_connection_inf
    8 to the pointer to get the actual layer content */
 int process_layer(header_info *header, unsigned char *output_layer, const unsigned char *layer, const unsigned char *node_public_key, const unsigned char *node_private_key);
 
-int decrypt_incoming_packet(unsigned char *packet, uint64_t packet_id, const route_info *route);
+int decrypt_incoming_packet(unsigned char *packet, const route_info *route);
 
 /* packet will contain a pointer into decrypted_packet for packet->data.content.
    decrypted_packet will not be modified; it is non-const because packet->data.content is non-const.
@@ -163,7 +159,7 @@ int free_packet(packet_info *packet);
 /* route_list will contain pointers into data->content */
 int read_route_list_data(return_route_list_info *route_list, const data_info *data);
 
-int generate_route(route_info *route, uint32_t route_id, const client_connection_info *connection, const node_info *available_nodes, size_t node_count, int is_incoming); 
+int generate_route(route_info *route, uint64_t route_id, const client_connection_info *connection, const node_info *available_nodes, size_t node_count, int is_incoming); 
 int encrypt_route(unsigned char *encrypted_route, const route_info *route, const unsigned char *entry_client_id);
 
 int generate_symmetric_key(unsigned char *symmetric_key, const unsigned char *node_public_key, const unsigned char *node_private_key, const unsigned char *ephemeral_public_key, const unsigned char *ephemeral_private_key);

@@ -24,7 +24,7 @@
 #endif
 
 
-/*
+
 #include <stdio.h>
 static void print_hex(const unsigned char *buffer, size_t len) {
     const char *digits = "0123456789abcdef";
@@ -34,7 +34,7 @@ static void print_hex(const unsigned char *buffer, size_t len) {
         putchar(digits[buffer[i] & 15]);
     }
 }
-*/
+
 
 
 static unsigned char data_nonce[crypto_stream_NONCEBYTES] = {0};
@@ -153,19 +153,13 @@ int create_route_list_data(data_info *data, const route_list_info *route_list, c
 	assert(data->content);
 	assert(route_list);
 	assert(route_list->routes);
+	assert(route_list->count > 0 && route_list->count <= ROUTES_PER_PACKET);
 	assert(entry_client_id);
-	assert(sizeof route_list->total_count == sizeof(uint32_t));
-	assert(sizeof route_list->start_sequence_id == sizeof(uint64_t));
-	assert(sizeof route_list->count == 1);
 
 	unsigned char *p = data->content;
-	unsigned char route_count = route_list->count;
+	size_t route_count = route_list->count;
 	const route_info *routes = route_list->routes;
-
-	write_uint32(&p, route_list->total_count);
-	write_uint64(&p, route_list->start_sequence_id);
-	write_byte(&p, route_count);
-
+	
 	for(size_t i = 0; i < route_count; i++) {
 		if(encrypt_route(p, &routes[i], entry_client_id))
 			return 1;
@@ -183,6 +177,7 @@ int create_incoming_packet(unsigned char *packet, const exit_node_connection_inf
 	assert(connection);
 	assert(route);
 	assert(route->data);
+	assert(connection->next_route_id == route->id);
 	assert(acks || ack_count == 0);
 	assert(data);
 
@@ -191,13 +186,19 @@ int create_incoming_packet(unsigned char *packet, const exit_node_connection_inf
 	unsigned char *encrypted_start;
 	unsigned char *end_ptr = packet + PACKET_SIZE - crypto_secretbox_MACBYTES;
 
-	write_uint64(&pn, connection->next_packet_id);
+	write_uint64(&pn, connection->next_route_id);
 	write_binary(&packet, route->data, INCOMING_ROUTE_LEN);
 
 	encrypted_start = packet;
 
+#ifdef DEBUG
 	write_uint64(&packet, 0);
-	write_uint64(&packet, connection->next_packet_id);
+	write_uint64(&packet, connection->next_route_id);
+	printf("ROUTE_ID: ");
+	print_hex(encrypted_start, 16);
+	puts("*****");
+#endif
+
 	write_data_section(packet, end_ptr, connection->connection_id, connection->next_sequence_id, acks, ack_count, data);
 
 	if(crypto_secretbox_easy(encrypted_start, encrypted_start, end_ptr - encrypted_start, inner_nonce, connection->symmetric_key))
@@ -308,9 +309,10 @@ puts("");
 }
 
 
-int decrypt_incoming_packet(unsigned char *packet, uint64_t packet_id, const route_info *route) {
+int decrypt_incoming_packet(unsigned char *packet, const route_info *route) {
 	assert(packet);
 	assert(route);
+	assert(sizeof route->id == sizeof(uint64_t));
 
 	unsigned char inner_nonce[crypto_secretbox_NONCEBYTES] = {0};
 	unsigned char *pn = inner_nonce;
@@ -320,23 +322,26 @@ int decrypt_incoming_packet(unsigned char *packet, uint64_t packet_id, const rou
 	if(packet[crypto_box_PUBLICKEYBYTES] & ~3)
 		return 1;
 
-	write_uint64(&pn, packet_id);
+	write_uint64(&pn, route->id);
 	packet += INCOMING_ROUTE_LEN;
 
-	assert(memcmp(packet + crypto_secretbox_MACBYTES, route->encrypted_packet_id, sizeof route->encrypted_packet_id) == 0);
+	assert(memcmp(packet + crypto_secretbox_MACBYTES, route->encrypted_route_id, sizeof route->encrypted_route_id) == 0);
 
-	for(i = 0; i < ROUTE_NODES_MAX - 1; i++) {
+	for(i = ROUTE_NODES_MAX - 1; i > 0; i--) {
 		if(crypto_stream_xor(packet, packet, end_ptr - packet, data_nonce, route->nodes[i].symmetric_key))
 			return 2;
 	}
 
-	if(crypto_secretbox_easy(packet, packet, end_ptr - packet, inner_nonce, route->nodes[i].symmetric_key))
+	if(crypto_secretbox_open_easy(packet, packet, end_ptr - packet, inner_nonce, route->nodes[0].symmetric_key))
 		return 3;
 
 #ifdef DEBUG
+	printf("ROUTE_ID: ");
+	print_hex(packet, 16);
+	puts("*****DECRYPT");
 	const unsigned char *p = packet;
 	assert(read_uint64(&p) == 0);
-	assert(read_uint64(&p) == packet_id);
+	assert(read_uint64(&p) == route->id);
 #endif
 	return 0;
 }
@@ -364,23 +369,26 @@ int read_packet(packet_info *packet, unsigned char *decrypted_packet, int is_inc
 
 
 	if(is_incoming) {
+		p += INCOMING_ROUTE_LEN;
+
 #ifndef DEBUG
-		p += PACKET_ID_SIZE;
+		p += ROUTE_ID_SIZE;
 #else
-		unsigned char id[PACKET_ID_SIZE];
+		unsigned char id[ROUTE_ID_SIZE];
 		read_binary(id, &p, sizeof id);
 
-		for(size_t id_index = 0; id_index < sizeof id; id_index++)
+		print_hex(id, sizeof id);
+
+		for(size_t id_index = 0; id_index < 8; id_index++)
 			assert(id[id_index] == 0);
 
 		memset(packet->exit_client_id, 0, sizeof packet->exit_client_id);
-		packet->connection_id = 0;
 #endif
 	} else {
 		read_binary(packet->exit_client_id, &p, sizeof packet->exit_client_id);
-		packet->connection_id = read_uint16(&p);
 	}
 
+	packet->connection_id = read_uint16(&p);
 	packet->sequence_id = read_uint64(&p);
 	ack_count = read_uint16(&p);
 	ack_len = ack_count * 2 * sizeof(uint64_t);
@@ -438,26 +446,25 @@ int read_route_list_data(return_route_list_info *route_list, const data_info *da
 	assert(data);
 	assert(data->content);
 	assert(data->length <= OUTGOING_DATA_MAX);
+	assert(sizeof route_list->routes[0].id == sizeof(uint64_t));
+	assert(sizeof route_list->routes[0].dest_node_id == sizeof(uint64_t));
 
 	const unsigned char *p = data->content;
 	const unsigned char *end_ptr = p + data->length;
-	unsigned char route_count;
+	size_t route_count = data->length / ROUTE_SIZE;
 	return_route_info *route;
 
-	if(data->length < 13)
+	if(route_count == 0)
 		return 1;
 
-	route_list->total_count = read_uint32(&p);
-	route_list->start_sequence_id = read_uint64(&p);
-	route_count = read_byte(&p);
 	route_list->count = route_count;
 
-	if(route_count * ROUTE_SIZE != end_ptr - p)
+	if(route_count * ROUTE_SIZE != data->length)
 		return 2;
 
 	for(size_t i = 0; i < route_count; i++) {
 		route = &route_list->routes[i];
-		route->id = read_uint32(&p);
+		route->id = read_uint64(&p);
 		route->dest_node_id = read_uint64(&p);
 		route->data = p;
 		p += INCOMING_ROUTE_LEN;
@@ -468,7 +475,7 @@ int read_route_list_data(return_route_list_info *route_list, const data_info *da
 }
 
 
-int generate_route(route_info *route, uint32_t route_id, const client_connection_info *connection, const node_info *available_nodes, size_t node_count, int is_incoming) {
+int generate_route(route_info *route, uint64_t route_id, const client_connection_info *connection, const node_info *available_nodes, size_t node_count, int is_incoming) {
 	assert(route);
 	assert(connection);
 	assert(available_nodes);
@@ -521,16 +528,16 @@ int generate_route(route_info *route, uint32_t route_id, const client_connection
 
 	write_uint64(&p, route_id);
 
-	p = route->encrypted_packet_id;
+	p = route->encrypted_route_id;
 	write_uint64(&p, 0);
 	write_uint64(&p, route_id);
-	p = route->encrypted_packet_id;
+	p = route->encrypted_route_id;
 
-	if(crypto_secretbox_detached(p, mac, p, PACKET_ID_SIZE, inner_nonce, connection->exit_node_symmetric_key))
+	if(crypto_secretbox_detached(p, mac, p, ROUTE_ID_SIZE, inner_nonce, connection->exit_node_symmetric_key))
 		return 3;
 
 	for(i = ROUTE_NODES_MAX	- 2; i >= 0; i--) {
-		if(crypto_stream_xor(p, p, PACKET_ID_SIZE, data_nonce, route->nodes[i].symmetric_key))
+		if(crypto_stream_xor(p, p, ROUTE_ID_SIZE, data_nonce, route->nodes[i].symmetric_key))
 			return 4;
 	}
 
@@ -542,7 +549,7 @@ int encrypt_route(unsigned char *encrypted_route, const route_info *route, const
 	assert(encrypted_route);
 	assert(route);
 	assert(entry_client_id);
-	assert(sizeof route->id == sizeof(uint32_t));
+	assert(sizeof route->id == sizeof(uint64_t));
 	assert(sizeof route->nodes[0].node->id == sizeof(uint64_t));
 
 	unsigned char *p = encrypted_route;
@@ -550,7 +557,7 @@ int encrypt_route(unsigned char *encrypted_route, const route_info *route, const
 	unsigned char last_byte;
 	const route_node_info *route_node = &route->nodes[0];
 
-	write_uint32(&p, route->id);
+	write_uint64(&p, route->id);
 
 	for(size_t n = 1; n < ROUTE_NODES_MAX; n++) {
 		route_node = &route->nodes[n];

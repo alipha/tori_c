@@ -9,7 +9,7 @@
 #define AVAILABLE_NODES 100 //4
 #define NODE_ID_START 10000
 
-//#define TESTING 1
+#define TESTING 1
 
 #ifndef TESTING
 #define PACKET_COUNT 1000
@@ -46,7 +46,7 @@ unsigned char client_id[CLIENT_ID_SIZE] = {0};
 
 int is_blank(const unsigned char *buffer, size_t len);
 void print_hex(const unsigned char *buffer, size_t len);
-void print_route(const route_info *routes, const char *name, uint32_t route_id);
+void print_route(const route_info *routes, const char *name, uint64_t route_id);
 void allocate(void);
 void create_node_keys(void);
 void setup_client(void);
@@ -117,7 +117,12 @@ int main(void) {
 
 	process_packets();
 	process_packets();
+
+#ifdef TESTING
 	verify_incoming_packets();
+#endif
+
+	getchar();
 	return 0;
 }
 
@@ -139,9 +144,9 @@ void print_hex(const unsigned char *buffer, size_t len) {
 	}
 }
 
-void print_route(const route_info *route, const char *name, uint32_t route_id) {
+void print_route(const route_info *route, const char *name, uint64_t route_id) {
 	printf("%s[%d] = {\n", name, route_id);
-	printf("\tid = %u,\n", route->id);
+	printf("\tid = %lu,\n", route->id);
 
 	for(size_t n = 0; n < ROUTE_NODES_MAX; n++) {
 		const route_node_info *node = &route->nodes[n];
@@ -233,7 +238,7 @@ void setup_client(void) {
 
 void create_outgoing_packets(void) {
 	int error = 0;
-	uint32_t route_id = 0;
+	uint64_t route_id = 0;
 
 #ifndef TESTING
 	route_info out_route;
@@ -246,8 +251,6 @@ void create_outgoing_packets(void) {
 		assert(route_id == i * ROUTES_PER_PACKET);
 
 		connection.next_sequence_id = i;
-		route_lists[i].total_count = i * 3; //PACKET_COUNT * ROUTES_PER_PACKET;
-		route_lists[i].start_sequence_id = i * 2; //0;
 		route_lists[i].count = ROUTES_PER_PACKET;
 
 		for(size_t r = 0; r < ROUTES_PER_PACKET; r++) {
@@ -275,7 +278,7 @@ void create_outgoing_packets(void) {
 		}
 
 #ifdef TESTING
-		assert(data.length == 1033); /* ROUTES_PER_PACKET * ROUTE_SIZE + 13 */
+		assert(data.length == 1060); /* ROUTES_PER_PACKET * ROUTE_SIZE */
 		assert(is_blank(data.content - 1000, 1000));
 		assert(is_blank(data.content + data.length, 1000));
 		puts("create_route_list_data success");
@@ -349,7 +352,7 @@ void process_packets(void) {
 
 void verify_outgoing_packets(void) {
 	int error = 0;
-	uint32_t route_id = 0;
+	uint64_t route_id = 0;
 	uint64_t expected_node_id;
 
 	packet_info packet;
@@ -394,27 +397,6 @@ void verify_outgoing_packets(void) {
 			exit(15);
 		}
 
-		if(route_list.total_count != i * 3) {
-			printf("Bad total_count. Expected %lu. Actual: %d\n", i * 3, route_list.total_count);
-			exit(16);
-		}
-
-		if(route_list.start_sequence_id != i * 2) {
-			printf("Bad start_sequence_id. Expected %lu. Actual: %lu\n", i * 2, route_list.start_sequence_id);
-			exit(17);
-		}
-/*
-		if(route_list.total_count != PACKET_COUNT * ROUTES_PER_PACKET) {
-			printf("Bad total_count. Expected %d. Actual: %d\n", PACKET_COUNT * ROUTES_PER_PACKET, route_list.total_count);
-			exit(16);
-		}
-
-		if(route_list.start_sequence_id != 0) {
-			printf("Bad start_sequence_id. Expected 0. Actual: %lu\n", route_list.start_sequence_id);
-			exit(17);
-		}
-*/
-
 		if(route_list.count != ROUTES_PER_PACKET) {
 			printf("Bad route_list.count. Expected %d. Actual: %d\n", ROUTES_PER_PACKET, route_list.count);
 			exit(18);
@@ -444,6 +426,7 @@ void verify_outgoing_packets(void) {
 
 void create_incoming_packets(void) {
 	size_t i;
+	uint64_t route_id = 0;
 	int error = 0;
 	packet_bytes *temp;
 	exit_node_connection_info exit_connection;
@@ -495,7 +478,7 @@ void create_incoming_packets(void) {
 //size_t r = ROUTES_PER_PACKET - 1;
 	for(size_t r = 0; r < ROUTES_PER_PACKET; r++) {
 		for(i = 0; i < PACKET_COUNT; i++) {
-			exit_connection.next_packet_id = i;
+			exit_connection.next_route_id = route_id;
 			exit_connection.next_sequence_id = i * 10000 + r;
 			data.content[0] = 'a' + (i & 15) + r;
 
@@ -503,6 +486,8 @@ void create_incoming_packets(void) {
 				printf("create_incoming_packet failed: %d\n", error);
 				exit(24);
 			}
+
+			route_id++;
 
 #ifdef TESTING
 			if(i == 0)
@@ -521,11 +506,59 @@ void create_incoming_packets(void) {
 
 void verify_incoming_packets(void) {
 	int error = 0;
+	uint64_t sequence_id;
+	packet_info packet;
+	char data_content[] = "xThis is some secret data";
+	char first_char;
 
 	for(size_t i = 0; i < PACKET_COUNT; i++) {
-		if((error = decrypt_incoming_packet(packets[i] + DEST_ID_SIZE, i, &route_lists[i].routes[ROUTES_PER_PACKET - 1]))) {
+		sequence_id = i * 10000 + ROUTES_PER_PACKET - 1;
+		first_char = 'a' + (i & 15) + ROUTES_PER_PACKET - 1;
+
+		if((error = decrypt_incoming_packet(packets[i] + DEST_ID_SIZE, &route_lists[i].routes[ROUTES_PER_PACKET - 1]))) {
 			printf("decrypt_incoming_packet failed: %d\n", error);
 			exit(25);
+		}
+
+		if((error = read_packet(&packet, packets[i] + DEST_ID_SIZE, 1))) {
+			printf("verify_incoming_packets read_packet failed: %d\n", error);
+			exit(26);
+		}
+
+		if (packet.connection_id != 15) {
+			printf("verify_incoming_packets: Bad connection_id. Expected 15. Actual: %d\n", packet.connection_id);
+			exit(28);
+		}
+
+		if (packet.sequence_id != sequence_id) {
+			printf("verify_incoming_packets: Bad sequence_id. Expected %lu. Actual: %lu\n", i, packet.sequence_id);
+			exit(29);
+		}
+
+		if (packet.ack_count != 0) {
+			printf("verify_incoming_packets: Bad ack_count. Expected 0. Actual: %d\n", packet.ack_count);
+			exit(30);
+		}
+
+		if (packet.data.type != CONTENT_DATA) {
+			printf("verify_incoming_packets: Bad data.type. Expected %d. Actual: %d\n", (int)CONTENT_DATA, packet.data.type);
+			exit(31);
+		}
+
+		if (packet.data.length != strlen(data_content)) {
+			printf("verify_incoming_packets: Bad data.length. Expected %d. Actual: %d\n", strlen(data_content), packet.data.length);
+			exit(32);
+		}
+
+		if (packet.data.content[0] != first_char) {
+			printf("verify_incoming_packets: Bad data.type. Expected %c. Actual: %d\n", first_char, packet.data.content[0]);
+			exit(33);
+		}
+
+		if (memcmp(packet.data.content + 1, data_content + 1, packet.data.length - 1) != 0) {
+			data_content[data.length] = '\0';
+			printf("verify_incoming_packets: Bad data.content. Expected '%s'. Actual: '%s'\n", (char*)packet.data.content + 1, data_content + 1);
+			exit(34);
 		}
 	}
 }
