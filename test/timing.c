@@ -1,5 +1,6 @@
-#include "pack.h"
-#include "packet.h"
+#include "../pack.h"
+#include "../packet.h"
+#include "../data.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,7 +10,7 @@
 #define AVAILABLE_NODES 100 //4
 #define NODE_ID_START 10000
 
-#define TESTING 1
+//#define TESTING 1
 
 #ifndef TESTING
 #define PACKET_COUNT 1000
@@ -145,7 +146,7 @@ void print_hex(const unsigned char *buffer, size_t len) {
 }
 
 void print_route(const route_info *route, const char *name, uint64_t route_id) {
-	printf("%s[%d] = {\n", name, route_id);
+	printf("%s[%lu] = {\n", name, route_id);
 	printf("\tid = %lu,\n", route->id);
 
 	for(size_t n = 0; n < ROUTE_NODES_MAX; n++) {
@@ -393,12 +394,12 @@ void verify_outgoing_packets(void) {
 
 
 		if(((error = read_route_list_data(&route_list, &packet.data)))) {
-			printf("read_route_list_data failed: %d]n", error);
+			printf("read_route_list_data failed: %d\n", error);
 			exit(15);
 		}
 
 		if(route_list.count != ROUTES_PER_PACKET) {
-			printf("Bad route_list.count. Expected %d. Actual: %d\n", ROUTES_PER_PACKET, route_list.count);
+			printf("Bad route_list.count. Expected %d. Actual: %lu\n", ROUTES_PER_PACKET, route_list.count);
 			exit(18);
 		}
 
@@ -407,7 +408,7 @@ void verify_outgoing_packets(void) {
 			expected_node_id = route_lists[i].routes[r].nodes[1].node->id;
 
 			if(route->id != route_id) {
-				printf("Bad route_id. Expected %d. Actual: %d\n", route_id, route->id);
+				printf("Bad route_id. Expected %lu. Actual: %lu\n", route_id, route->id);
 				exit(19);
 			}
 
@@ -546,7 +547,7 @@ void verify_incoming_packets(void) {
 		}
 
 		if (packet.data.length != strlen(data_content)) {
-			printf("verify_incoming_packets: Bad data.length. Expected %d. Actual: %d\n", strlen(data_content), packet.data.length);
+			printf("verify_incoming_packets: Bad data.length. Expected %lu. Actual: %d\n", strlen(data_content), packet.data.length);
 			exit(32);
 		}
 

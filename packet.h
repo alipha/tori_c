@@ -28,12 +28,6 @@ typedef enum data_type {
 	DATA_TYPE_COUNT = 4
 } data_type;
 
-typedef enum status_type {
-	CLOSE_STATUS = 0,
-	DNS_ERROR_STATUS = 1,
-	REFUSED_ERROR_STATUS = 2
-} status_type;
-
 typedef enum address_type {
 	IPV4_ADDRESS = 1,
 	DOMAIN_NAME_ADDRESS = 3,
@@ -138,9 +132,6 @@ void write_data_section(unsigned char *packet, const unsigned char *end_ptr, uin
 /* acks + data must be <= OUTGOING_DATA_MAX */
 int create_outgoing_packet(unsigned char *packet, const client_connection_info *connection, const route_info *route, const ack_info *acks, uint16_t ack_count, const data_info *data);
 
-/* data->content must point to a valid buffer to fill */
-int create_route_list_data(data_info *data, const route_list_info *route_list, const unsigned char *entry_client_id);
-
 /* acks + data must be <= INCOMING_DATA_MAX */
 int create_incoming_packet(unsigned char *packet, const exit_node_connection_info *connection, const return_route_info *route, const ack_info *acks, uint16_t ack_count, const data_info *data);
 
@@ -155,9 +146,6 @@ int decrypt_incoming_packet(unsigned char *packet, const route_info *route);
    packet->acks will point to allocated memory that needs to be freed with free_packet */
 int read_packet(packet_info *packet, unsigned char *decrypted_packet, int is_incoming);
 int free_packet(packet_info *packet);
-
-/* route_list will contain pointers into data->content */
-int read_route_list_data(return_route_list_info *route_list, const data_info *data);
 
 int generate_route(route_info *route, uint64_t route_id, const client_connection_info *connection, const node_info *available_nodes, size_t node_count, int is_incoming); 
 int encrypt_route(unsigned char *encrypted_route, const route_info *route, const unsigned char *entry_client_id);
