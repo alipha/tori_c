@@ -326,6 +326,7 @@ int decrypt_incoming_packet(unsigned char *packet, const route_info *route) {
 int read_packet(packet_info *packet, unsigned char *decrypted_packet, int is_incoming) {
 	assert(packet);
 	assert(decrypted_packet);
+	assert(sizeof packet->hash_value == CLIENT_ID_SIZE + sizeof packet->connection_id + sizeof packet->sequence_id);
 	assert(sizeof packet->connection_id == sizeof(uint16_t));
 	assert(sizeof packet->sequence_id == sizeof(uint64_t));
 	assert(sizeof packet->ack_count == sizeof(uint16_t));
@@ -345,6 +346,7 @@ int read_packet(packet_info *packet, unsigned char *decrypted_packet, int is_inc
 
 
 	if(is_incoming) {
+		//memset(packet->exit_client_id, 0, sizeof packet->exit_client_id);
 		p += INCOMING_ROUTE_LEN;
 
 #ifndef DEBUG
@@ -357,7 +359,7 @@ int read_packet(packet_info *packet, unsigned char *decrypted_packet, int is_inc
 
 		for(size_t id_index = 0; id_index < 8; id_index++)
 			assert(id[id_index] == 0);
-
+		
 		memset(packet->exit_client_id, 0, sizeof packet->exit_client_id);
 #endif
 	} else {
@@ -405,6 +407,9 @@ int read_packet(packet_info *packet, unsigned char *decrypted_packet, int is_inc
 
 	/* get around the fact p is const */
 	packet->data.content = decrypted_packet + (p - decrypted_packet);
+
+	/* we want to do this when we create an incoming packet, not when we read one */
+	//compute_packet_hash(packet->hash_value, packet->exit_client_id, packet->connection_id, packet->sequence_id);
 	return 0;
 }
 
@@ -414,6 +419,23 @@ int free_packet(packet_info *packet) {
 
 	free(packet->acks);
 	return 0;
+}
+
+
+void compute_packet_hash(unsigned char *hash_value, const unsigned char *client_id, uint16_t connection_id, uint64_t sequence_id) {
+	assert(hash_value);
+	assert(client_id);
+	assert(sizeof connection_id == sizeof(uint16_t));
+	assert(sizeof sequence_id == sizeof(uint64_t));
+
+	unsigned char *p = hash_value;
+	write_binary(&p, client_id, CLIENT_ID_SIZE);
+	write_uint16(&p, connection_id);
+	write_uint64(&p, sequence_id);
+
+	/* make sure that the first 4 bytes are dependent upon the client_id, connection_id, and sequence_id for good hashing */
+	*(uint32_t*)hash_value ^= (uint32_t)sequence_id;
+	*(uint16_t*)&hash_value[1] ^= connection_id;
 }
 
 

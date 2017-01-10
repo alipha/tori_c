@@ -31,8 +31,8 @@ typedef struct hashset {
 int hashset_create(hashset *set, size_t id_offset, size_t id_size, size_t data_size, size_t bucket_bits, size_t max_count);
 void hashset_free(hashset *set);
 
-void* hashset_alloc(hashset *set, const unsigned char *id);
-int hashset_remove(hashset *set, const unsigned char *id);
-void* hashset_get(hashset *set, const unsigned char *id);
+void* hashset_alloc(hashset *set, const void *id);
+int hashset_remove(hashset *set, const void *id);
+void* hashset_get(hashset *set, const void *id);
 
 #endif

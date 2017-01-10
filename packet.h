@@ -44,6 +44,8 @@ typedef struct node_info {
 } node_info;
 
 
+/* TODO: client IDs should be public keys so connection requests can be signed
+	to prevent a malicious client from using the same client ID */
 typedef struct client_connection_info {
 	unsigned char exit_client_id[CLIENT_ID_SIZE];
 	uint16_t connection_id;
@@ -103,6 +105,8 @@ typedef struct ack_info {
 
 
 typedef struct packet_info {
+	unsigned char hash_value[CLIENT_ID_SIZE + sizeof(uint16_t) + sizeof(uint64_t)];	// TODO: populate
+	//clock_t send_time;	// TODO: populate
 	unsigned char exit_client_id[CLIENT_ID_SIZE];
 	uint16_t connection_id;
 	uint64_t sequence_id;
@@ -146,6 +150,8 @@ int decrypt_incoming_packet(unsigned char *packet, const route_info *route);
    packet->acks will point to allocated memory that needs to be freed with free_packet */
 int read_packet(packet_info *packet, unsigned char *decrypted_packet, int is_incoming);
 int free_packet(packet_info *packet);
+
+void compute_packet_hash(unsigned char *hash_value, const unsigned char *client_id, uint16_t connection_id, uint64_t sequence_id);
 
 int generate_route(route_info *route, uint64_t route_id, const client_connection_info *connection, const node_info *available_nodes, size_t node_count, int is_incoming); 
 int encrypt_route(unsigned char *encrypted_route, const route_info *route, const unsigned char *entry_client_id);

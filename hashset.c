@@ -1,18 +1,21 @@
 #include "hashset.h"
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include <assert.h>
 
 
+size_t hashset_bucket_id(const hashset *set, const unsigned char *id);
+
+
 int hashset_create(hashset *set, size_t id_offset, size_t id_size, size_t data_size, size_t bucket_bits, size_t max_count) {
 	assert(set);
-	assert(set->id_size >= sizeof(size_t));
-	assert(set->id_offset + set->id_size <= set->data_size);
-	assert(set->bucket_bits < 30);
+	assert(id_size == 1 || id_size == 2 || id_size == 4 || id_size >= 8);
+	assert(id_offset + id_size <= data_size);
+	assert(bucket_bits < 30);
+	assert(id_size * 8 >= bucket_bits);
 
-	hashset_node node;
-	size_t node_size = (node.data - (unsigned char *)&node) + data_size;
-
+	size_t node_size = offsetof(hashset_node, data) + data_size;
 	size_t bucket_count = (1U << bucket_bits);
 
 	set->id_offset = id_offset;
@@ -28,6 +31,9 @@ int hashset_create(hashset *set, size_t id_offset, size_t id_size, size_t data_s
 
 	if(!set->buckets)
 		return HASHSET_ERROR_ALLOC_BUCKETS;
+
+	for(size_t i = 0; i < bucket_count; i++)
+		set->buckets[i] = NULL;
 
 	set->nodes = malloc(max_count * node_size);
 
@@ -48,11 +54,10 @@ void hashset_free(hashset *set) {
 }
 
 
-void* hashset_alloc(hashset *set, const unsigned char *id) {
+void* hashset_alloc(hashset *set, const void *id) {
 	assert(set);
 	assert(set->buckets);
 	assert(set->nodes);
-	assert(p);
 	assert(id);
 	assert(set->count <= set->max_count);
 	assert(!hashset_get(set, id));
@@ -60,7 +65,7 @@ void* hashset_alloc(hashset *set, const unsigned char *id) {
 	if(set->count >= set->max_count)
 		return NULL;
 
-	size_t bucket_id = *(const size_t*)id & set->bucket_bitmask;
+	size_t bucket_id = hashset_bucket_id(set, id);
 	hashset_node *node = set->freed_nodes;
 
 	if(node)
@@ -79,13 +84,13 @@ void* hashset_alloc(hashset *set, const unsigned char *id) {
 }
 
 
-int hashset_remove(hashset *set, const unsigned char *id) {
+int hashset_remove(hashset *set, const void *id) {
 	assert(set);
 	assert(set->buckets);
 	assert(set->nodes);
 	assert(id);
 
-	size_t bucket_id = *(const size_t*)id & set->bucket_bitmask;
+	size_t bucket_id = hashset_bucket_id(set, id);
 	hashset_node *prev = NULL;
 	hashset_node *node = set->buckets[bucket_id];
 
@@ -113,13 +118,13 @@ int hashset_remove(hashset *set, const unsigned char *id) {
 }
 
 
-void* hashset_get(hashset *set, const unsigned char *id) {
+void* hashset_get(hashset *set, const void *id) {
 	assert(set);
 	assert(set->buckets);
 	assert(set->nodes);
 	assert(id);
 
-	size_t bucket_id = *(const size_t*)id & set->bucket_bitmask;
+	size_t bucket_id = hashset_bucket_id(set, id);
 	hashset_node *node = set->buckets[bucket_id];
 
 	while(node) {
@@ -133,3 +138,24 @@ void* hashset_get(hashset *set, const unsigned char *id) {
 	else
 		return NULL;
 }
+
+
+size_t hashset_bucket_id(const hashset *set, const unsigned char *id) {
+	assert(set);
+	assert(id);
+
+	switch(set->id_size) {
+	case 1: return *id & set->bucket_bitmask;
+	case 2: return *(const uint16_t*)id & set->bucket_bitmask;
+	default:
+		assert(set->id_size >= 4);
+		return *(const uint32_t*)id & set->bucket_bitmask;
+	}
+}
+/*	case 4: return *(const uint32_t*)id & set->bucket_bitmask;
+	default:
+		assert(set->id_size >= 8);
+		return *(const uint64_t*)&id & set->bucket_bitmask;
+	}
+}
+*/
