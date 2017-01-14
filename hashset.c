@@ -60,7 +60,13 @@ void* hashset_alloc(hashset *set, const void *id) {
 	assert(set->nodes);
 	assert(id);
 	assert(set->count <= set->max_count);
+
+#ifdef TESTING
+	if(hashset_get(set, id))
+		return NULL;
+#else
 	assert(!hashset_get(set, id));
+#endif
 
 	if(set->count >= set->max_count)
 		return NULL;

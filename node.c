@@ -8,6 +8,7 @@
 node_info nodes[NODE_COUNT_MAX];
 size_t node_count;
 
+uint16_t port;
 unsigned char private_key[crypto_box_SECRETKEYBYTES];
 
 
@@ -15,13 +16,13 @@ int read_nodes_file(void);
 int read_private_key_file(void);
 
 
-int main(void) {
+int main(int argc, char **argv) {
 	int error;
 
 	if((error = read_nodes_file()))
 		return error;
 
-	if((error = read_private_key_file()))
+	if((error = read_private_key_file(argc, argv)))
 		return error;
 
 
@@ -29,6 +30,7 @@ int main(void) {
 }
 
 
+// id hostname[:port] public_key_hex
 int read_nodes_file(void) {
 	char line[400];
 	FILE* fp;
@@ -47,7 +49,7 @@ int read_nodes_file(void) {
 }
 
 
-int read_private_key_file(void) {
+int read_private_key_file(int argc, char **argv) {
 	FILE* fp;
 
 	fp = fopen("private.key", "r");
