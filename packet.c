@@ -167,9 +167,10 @@ int create_incoming_packet(unsigned char *packet, const exit_node_connection_inf
 
 	encrypted_start = packet;
 
-#ifdef DEBUG
 	write_uint64(&packet, 0);
 	write_uint64(&packet, connection->next_route_id);
+
+#ifdef DEBUG
 	printf("ROUTE_ID: ");
 	print_hex(encrypted_start, 16);
 	puts("*****");
@@ -302,11 +303,18 @@ int decrypt_incoming_packet(unsigned char *packet, const route_info *route) {
 	packet += INCOMING_ROUTE_LEN;
 
 	assert(memcmp(packet + crypto_secretbox_MACBYTES, route->encrypted_route_id, sizeof route->encrypted_route_id) == 0);
+puts("");
 
 	for(i = ROUTE_NODES_MAX - 1; i > 0; i--) {
+print_hex(packet, crypto_secretbox_MACBYTES + 16);
+printf(" with "); print_hex(route->nodes[i].symmetric_key, sizeof route->nodes[i].symmetric_key); printf(" nonce "); print_hex(data_nonce, sizeof data_nonce);
+puts("");
 		if(crypto_stream_xor(packet, packet, end_ptr - packet, data_nonce, route->nodes[i].symmetric_key))
 			return 2;
 	}
+print_hex(packet, crypto_secretbox_MACBYTES + 16);
+printf(" with "); print_hex(route->nodes[0].symmetric_key, sizeof route->nodes[0].symmetric_key); printf(" nonce "); print_hex(inner_nonce, sizeof inner_nonce);
+puts("");
 
 	if(crypto_secretbox_open_easy(packet, packet, end_ptr - packet, inner_nonce, route->nodes[0].symmetric_key))
 		return 3;
@@ -449,7 +457,7 @@ int generate_route(route_info *route, uint64_t route_id, const client_connection
 	int i = 0;
 	size_t nodeIndexes[ROUTE_NODES_MAX] = {SIZE_MAX};
 	unsigned char ephemeral_private_key[crypto_box_SECRETKEYBYTES];
-	unsigned char mac[crypto_secretbox_MACBYTES];
+	unsigned char mac_and_id[crypto_secretbox_MACBYTES + sizeof route->encrypted_route_id];
 	unsigned char inner_nonce[crypto_secretbox_NONCEBYTES] = {0};
 	unsigned char *p = inner_nonce;
 	route_node_info *route_node;
@@ -492,19 +500,25 @@ int generate_route(route_info *route, uint64_t route_id, const client_connection
 
 	write_uint64(&p, route_id);
 
-	p = route->encrypted_route_id;
+	p = mac_and_id; //+ crypto_secretbox_MACBYTES;
 	write_uint64(&p, 0);
 	write_uint64(&p, route_id);
-	p = route->encrypted_route_id;
+	p = mac_and_id;
 
-	if(crypto_secretbox_detached(p, mac, p, ROUTE_ID_SIZE, inner_nonce, connection->exit_node_symmetric_key))
+if(route_id == 9) { puts("Encrypting route 9"); print_hex(p, 32); printf(" with "); print_hex(connection->exit_node_symmetric_key, sizeof connection->exit_node_symmetric_key); printf(" nonce "); print_hex(inner_nonce, sizeof inner_nonce);
+ puts(""); }
+
+	if(crypto_secretbox_easy(p, p, ROUTE_ID_SIZE, inner_nonce, connection->exit_node_symmetric_key))
 		return 3;
 
-	for(i = ROUTE_NODES_MAX	- 2; i >= 0; i--) {
-		if(crypto_stream_xor(p, p, ROUTE_ID_SIZE, data_nonce, route->nodes[i].symmetric_key))
+	for(i = 1; i < ROUTE_NODES_MAX; i++) {
+if(route_id == 9) { print_hex(p, 32);  printf(" with "); print_hex(route->nodes[i].symmetric_key, sizeof route->nodes[i].symmetric_key); printf(" nonce "); print_hex(data_nonce, sizeof data_nonce); puts(""); }
+		if(crypto_stream_xor(p, p, sizeof mac_and_id, data_nonce, route->nodes[i].symmetric_key))
 			return 4;
 	}
 
+if(route_id == 9) { print_hex(p, 32); puts(""); }
+	memcpy(route->encrypted_route_id, p + crypto_secretbox_MACBYTES, sizeof route->encrypted_route_id);
 	return 0;
 }
 

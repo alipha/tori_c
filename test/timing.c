@@ -422,6 +422,8 @@ void verify_outgoing_packets(void) {
 
 		free_packet(&packet);
 	}
+
+	puts("Verified outgoing packets");
 }
 
 
@@ -562,5 +564,7 @@ void verify_incoming_packets(void) {
 			exit(34);
 		}
 	}
+
+	puts("Verified incoming packets");
 }
 

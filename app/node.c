@@ -1,5 +1,5 @@
-#include "packet.h"
-#include "data.h"
+#include "../packet.h"
+#include "../data.h"
 #include <stdio.h>
 #include <string.h>
 #include <strings.h>
@@ -63,6 +63,7 @@ int read_nodes_file(void) {
 	}
 
 	while(node_count < NODE_COUNT_MAX && fgets(line, sizeof line, fp)) {
+puts("nodes.txt line");
 		if((error = parse_node_line(&nodes[node_count], line))) {
 			fprintf(stderr, "Error while reading line %lu of nodes.txt\n", node_count + 1);
 			return error;
@@ -71,6 +72,8 @@ int read_nodes_file(void) {
 		node_count++;
 	}
 
+puts("nodes.txt done");
+	fclose(fp);
 	return 0;
 }
 
@@ -122,7 +125,7 @@ int read_private_key_file(int argc, char **argv) {
 	size_t private_key_len = 0;
 	const char *filename = "private.settings";
 
-	if(argc > 2 || help_arg(argv[1])) {
+	if(argc > 2 || (argc == 2 && help_arg(argv[1]))) {
 		if(argc > 2)
 			fprintf(stderr, "Too many arguments to %s\n", argv[0]);
 		fprintf(stderr, "\nUsage: %s [settings filename]\n\n", argv[0]);
@@ -209,6 +212,8 @@ int write_private_key_file(const char *filename) {
 	while(fgets(domain_name, sizeof domain_name, stdin) && domain_name[0] == '\n')
 		printf("Please enter your public IP address or your domain name:\n");
 
+	if((end_ptr = strchr(domain_name, '\n')))
+		*end_ptr = '\0';
 
 
 	randombytes_buf(&node_id, sizeof node_id);
