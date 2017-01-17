@@ -39,6 +39,7 @@ typedef struct node_info {
 	uint64_t id;
 	address_type addr_type;
 	unsigned char ip_address[16];
+	char domain_name[256];
 	uint16_t port;
 	unsigned char public_key[crypto_box_PUBLICKEYBYTES];
 } node_info;
